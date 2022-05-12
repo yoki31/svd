@@ -1,6 +1,8 @@
 use super::*;
-use crate::elementext::ElementExt;
-use crate::svd::{DimElement, Register, RegisterInfo};
+use crate::svd::{
+    Field, ModifiedWriteValues, ReadAction, Register, RegisterInfo, RegisterProperties,
+    WriteConstraint,
+};
 
 impl Parse for Register {
     type Object = Self;
@@ -8,27 +10,49 @@ impl Parse for Register {
     type Config = Config;
 
     fn parse(tree: &Node, config: &Self::Config) -> Result<Self, Self::Error> {
-        if !tree.has_tag_name("register") {
-            return Err(SVDError::NotExpectedTag("register".to_string()).at(tree.id()));
-        }
+        parse_array("register", tree, config)
+    }
+}
 
-        let info = RegisterInfo::parse(tree, config)?;
+impl Parse for RegisterInfo {
+    type Object = Self;
+    type Error = SVDErrorAt;
+    type Config = Config;
 
-        if tree.get_child("dimIncrement").is_some() {
-            let array_info = DimElement::parse(tree, config)?;
-            check_has_placeholder(&info.name, "register").map_err(|e| e.at(tree.id()))?;
-            if let Some(indexes) = &array_info.dim_index {
-                if array_info.dim as usize != indexes.len() {
-                    return Err(SVDError::IncorrectDimIndexesCount(
-                        array_info.dim as usize,
-                        indexes.len(),
-                    )
-                    .at(tree.id()));
+    fn parse(tree: &Node, config: &Self::Config) -> Result<Self, Self::Error> {
+        RegisterInfo::builder()
+            .name(tree.get_child_text("name")?)
+            .display_name(tree.get_child_text_opt("displayName")?)
+            .description(tree.get_child_text_opt("description")?)
+            .alternate_group(tree.get_child_text_opt("alternateGroup")?)
+            .alternate_register(tree.get_child_text_opt("alternateRegister")?)
+            .address_offset(tree.get_child_u32("addressOffset")?)
+            .properties(RegisterProperties::parse(tree, config)?)
+            .modified_write_values(optional::<ModifiedWriteValues>(
+                "modifiedWriteValues",
+                tree,
+                config,
+            )?)
+            .write_constraint(optional::<WriteConstraint>(
+                "writeConstraint",
+                tree,
+                config,
+            )?)
+            .read_action(optional::<ReadAction>("readAction", tree, config)?)
+            .fields({
+                if let Some(fields) = tree.get_child("fields") {
+                    let fs: Result<Vec<_>, _> = fields
+                        .children()
+                        .filter(Node::is_element)
+                        .map(|t| Field::parse(&t, config))
+                        .collect();
+                    Some(fs?)
+                } else {
+                    None
                 }
-            }
-            Ok(info.array(array_info))
-        } else {
-            Ok(info.single())
-        }
+            })
+            .derived_from(tree.attribute("derivedFrom").map(|s| s.to_owned()))
+            .build(config.validate_level)
+            .map_err(|e| SVDError::from(e).at(tree.id()))
     }
 }

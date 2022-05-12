@@ -38,15 +38,45 @@ pub mod types;
 
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
+/// Advanced parser options
 pub struct Config {
+    /// SVD error check level
     pub validate_level: ValidateLevel,
-    //pub expand_arrays: bool,
-    //pub expand_derived: bool,
+    #[cfg(feature = "expand")]
+    /// Expand arrays and resolve derivedFrom
+    // TODO: split it on several independent options
+    pub expand: bool,
+    /// Derive register properties from parents
+    pub expand_properties: bool,
+    /// Skip parsing and emitting `enumeratedValues` and `writeConstraint` in `Field`
+    pub ignore_enums: bool,
 }
 
 impl Config {
+    /// SVD error check level
     pub fn validate_level(mut self, lvl: ValidateLevel) -> Self {
         self.validate_level = lvl;
+        self
+    }
+
+    #[cfg(feature = "expand")]
+    /// Expand arrays and derive
+    pub fn expand(mut self, val: bool) -> Self {
+        self.expand = val;
+        self
+    }
+
+    #[cfg(feature = "expand")]
+    /// Takes register `size`, `access`, `reset_value` and `reset_mask`
+    /// from peripheral or device properties if absent in register
+    pub fn expand_properties(mut self, val: bool) -> Self {
+        self.expand_properties = val;
+        self
+    }
+
+    /// Skip parsing `enumeratedValues` and `writeConstraint` in `Field`
+    pub fn ignore_enums(mut self, val: bool) -> Self {
+        self.ignore_enums = val;
         self
     }
 }
@@ -97,10 +127,12 @@ pub fn parse_with_config(xml: &str, config: &Config) -> anyhow::Result<Device> {
     let xml = trim_utf8_bom(xml);
     let tree = Document::parse(xml)?;
     let root = tree.root();
-    let device = root
+    let xmldevice = root
         .get_child("device")
         .ok_or_else(|| SVDError::MissingTag("device".to_string()).at(root.id()))?;
-    match Device::parse(&device, config) {
+
+    #[allow(unused_mut)]
+    let mut device = match Device::parse(&xmldevice, config) {
         Ok(o) => Ok(o),
         Err(e) => {
             let id = e.id;
@@ -134,7 +166,18 @@ pub fn parse_with_config(xml: &str, config: &Config) -> anyhow::Result<Device> {
             }
             res
         }
+    }?;
+
+    #[cfg(feature = "expand")]
+    if config.expand_properties {
+        expand::expand_properties(&mut device);
     }
+
+    #[cfg(feature = "expand")]
+    if config.expand {
+        device = expand::expand(&device)?;
+    }
+    Ok(device)
 }
 
 /// Return the &str trimmed UTF-8 BOM if the input &str contains the BOM.
@@ -146,11 +189,13 @@ fn trim_utf8_bom(s: &str) -> &str {
     }
 }
 
+mod array;
+use array::parse_array;
+
 mod access;
 mod addressblock;
 mod bitrange;
 mod cluster;
-mod clusterinfo;
 mod cpu;
 mod device;
 mod dimelement;
@@ -158,20 +203,22 @@ mod endian;
 mod enumeratedvalue;
 mod enumeratedvalues;
 mod field;
-mod fieldinfo;
 mod interrupt;
 mod modifiedwritevalues;
 mod peripheral;
-mod peripheralinfo;
 mod protection;
 mod readaction;
 mod register;
 mod registercluster;
-mod registerinfo;
 mod registerproperties;
 mod usage;
 mod writeconstraint;
 
+#[cfg(feature = "expand")]
+mod expand;
+
+#[cfg(feature = "expand")]
+pub use expand::{expand, expand_properties};
 /// SVD parse Errors.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum SVDError {

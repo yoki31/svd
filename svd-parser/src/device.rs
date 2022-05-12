@@ -14,13 +14,15 @@ impl Parse for Device {
             return Err(SVDError::NotExpectedTag("device".to_string()).at(tree.id()));
         }
 
-        Device::builder()
+        let mut device = Device::builder()
+            .vendor(tree.get_child_text_opt("vendor")?)
+            .vendor_id(tree.get_child_text_opt("vendorID")?)
             .name(tree.get_child_text("name")?)
-            .version(tree.get_child_text_opt("version")?)
-            .description(tree.get_child_text_opt("description")?)
+            .series(tree.get_child_text_opt("series")?)
+            .license_text(tree.get_child_text_opt("licenseText")?)
             .cpu(optional::<Cpu>("cpu", tree, config)?)
-            .address_unit_bits(optional::<u32>("addressUnitBits", tree, &())?)
-            .width(optional::<u32>("width", tree, &())?)
+            .header_system_filename(tree.get_child_text_opt("headerSystemFilename")?)
+            .header_definitions_prefix(tree.get_child_text_opt("headerDefinitionsPrefix")?)
             .default_register_properties(RegisterProperties::parse(tree, config)?)
             .peripherals({
                 let ps: Result<Vec<_>, _> = tree
@@ -30,8 +32,29 @@ impl Parse for Device {
                     .map(|t| Peripheral::parse(&t, config))
                     .collect();
                 ps?
-            })
-            .schema_version(tree.attribute("schemaVersion").map(|s| s.to_string()))
+            });
+        if let Some(version) = tree.get_child_text_opt("version")? {
+            device = device.version(version)
+        }
+        if let Some(description) = tree.get_child_text_opt("description")? {
+            device = device.description(description)
+        }
+        if let Some(bits) = optional::<u32>("addressUnitBits", tree, &())? {
+            device = device.address_unit_bits(bits)
+        }
+        if let Some(width) = optional::<u32>("width", tree, &())? {
+            device = device.width(width)
+        }
+        if let Some(xmlns_xs) = tree.attribute("xmlns:xs") {
+            device = device.xmlns_xs(xmlns_xs.to_string());
+        }
+        if let Some(location) = tree.attribute("xs:noNamespaceSchemaLocation") {
+            device = device.no_namespace_schema_location(location.to_string());
+        }
+        if let Some(schema_version) = tree.attribute("schemaVersion") {
+            device = device.schema_version(schema_version.to_string());
+        }
+        device
             .build(config.validate_level)
             .map_err(|e| SVDError::from(e).at(tree.id()))
     }
